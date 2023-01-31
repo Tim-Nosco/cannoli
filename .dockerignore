@@ -1,2 +1,5 @@
 Dockerfile
 .git
+target
+qemu
+*.swp

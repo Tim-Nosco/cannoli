@@ -12,6 +12,7 @@ members = [
     "examples/benchmark_graph",
     "examples/coverage",
     "examples/regtrace",
+    "examples/search-mem-uninit",
 ]
 default-members = [
     "jitter_always",

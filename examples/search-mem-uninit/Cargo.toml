@@ -1,5 +1,5 @@
 [package]
-name = "example_symbolizer"
+name = "example_search_mem_uninit"
 version = "0.1.0"
 edition = "2021"
 
