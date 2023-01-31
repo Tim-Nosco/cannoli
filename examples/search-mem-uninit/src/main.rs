@@ -28,9 +28,15 @@ enum Operation {
     },
 }
 
+struct Map {
+    start: u64,
+    size: u64,
+}
+
 /// The structure we implement [`Cannoli`] for!
 struct Tracer {
     reached_snapshot: bool,
+    maps: Vec<Map>,
 }
 
 struct Context {
@@ -63,6 +69,7 @@ impl Cannoli for Tracer {
         (
             Self {
                 reached_snapshot: !should_snapshot,
+                maps: Vec::new(),
             },
             Context {
                 snapshot_addr: parsed_addr,
@@ -148,6 +155,7 @@ impl Cannoli for Tracer {
                 Operation::Exec { pc } => {
                     println!("\x1b[0;34mEXEC\x1b[0m   @ {pc:#x}");
                     self.reached_snapshot = true;
+                    // sort the maps
                 }
                 Operation::Read { pc, addr, val, sz } => {
                     if self.reached_snapshot {
@@ -171,6 +179,10 @@ impl Cannoli for Tracer {
                     path,
                     offset,
                 } => {
+                    self.maps.push(Map {
+                        start: *base,
+                        size: *len,
+                    });
                     println!("\x1b[0;34mMMAP\x1b[0m   {base:#x} {len:#x} {path} {offset:#x}");
                 }
             }
