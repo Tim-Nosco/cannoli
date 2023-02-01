@@ -43,6 +43,24 @@ struct Context {
     snapshot_addr: u64,
 }
 
+impl Tracer {
+    fn check_in_map(&self, addr: u64) -> Option<&Map> {
+        match self.maps.binary_search_by_key(&addr, |x| x.start) {
+            Ok(_map_idx) => {
+                todo!();
+            }
+            Err(map_idx) => {
+                if let Some(map) = map_idx.checked_sub(1).and_then(|x| self.maps.get(x)) {
+                    if map.start < addr && map.start + map.size > addr {
+                        return Some(map);
+                    }
+                }
+            }
+        }
+        return None;
+    }
+}
+
 impl Cannoli for Tracer {
     /// The type emit in the serialized trace
     type Trace = Operation;
@@ -155,17 +173,27 @@ impl Cannoli for Tracer {
                 Operation::Exec { pc } => {
                     println!("\x1b[0;34mEXEC\x1b[0m   @ {pc:#x}");
                     self.reached_snapshot = true;
-                    // sort the maps
+                    self.maps.sort_by_key(|x| x.start);
                 }
                 Operation::Read { pc, addr, val, sz } => {
-                    if self.reached_snapshot {
-                        println!(
-                            "\x1b[0;32mREAD{sz}\x1b[0m  @ {pc:#x} | \
-                        {addr:#x} ={val:#x}"
-                        );
+                    if !self.reached_snapshot {
+                        continue;
                     }
+
+                    if let Some(map) = self.check_in_map(*addr) {
+                    } else {
+                        continue;
+                    }
+                    println!(
+                        "\x1b[0;32mREAD{sz}\x1b[0m  @ {pc:#x} | \
+                        {addr:#x} ={val:#x}"
+                    );
                 }
                 Operation::Write { pc, addr, val, sz } => {
+                    if let Some(map) = self.check_in_map(*addr) {
+                    } else {
+                        continue;
+                    }
                     if self.reached_snapshot {
                         println!(
                             "\x1b[0;31mWRITE{sz}\x1b[0m @ {pc:#x} | \
