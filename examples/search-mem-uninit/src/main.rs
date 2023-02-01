@@ -1,5 +1,6 @@
 //! TODO
 
+use bloom::{BloomFilter, ASMS};
 use cannoli::{create_cannoli, Cannoli};
 use std::env;
 use std::sync::Arc;
@@ -8,6 +9,7 @@ enum Operation {
     Exec {
         pc: u64,
     },
+    #[allow(dead_code)]
     Read {
         pc: u64,
         addr: u64,
@@ -31,12 +33,15 @@ enum Operation {
 struct Map {
     start: u64,
     size: u64,
+    tainted: BloomFilter,
+    seen: BloomFilter,
 }
 
 /// The structure we implement [`Cannoli`] for!
 struct Tracer {
     reached_snapshot: bool,
     maps: Vec<Map>,
+    pages_to_restore: Vec<u64>,
 }
 
 struct Context {
@@ -44,15 +49,15 @@ struct Context {
 }
 
 impl Tracer {
-    fn check_in_map(&self, addr: u64) -> Option<&Map> {
+    fn check_in_map(&self, addr: u64) -> Option<usize> {
         match self.maps.binary_search_by_key(&addr, |x| x.start) {
-            Ok(_map_idx) => {
-                todo!();
+            Ok(map_idx) => {
+                return Some(map_idx);
             }
             Err(map_idx) => {
                 if let Some(map) = map_idx.checked_sub(1).and_then(|x| self.maps.get(x)) {
                     if map.start < addr && map.start + map.size > addr {
-                        return Some(map);
+                        return Some(map_idx - 1);
                     }
                 }
             }
@@ -88,6 +93,7 @@ impl Cannoli for Tracer {
             Self {
                 reached_snapshot: !should_snapshot,
                 maps: Vec::new(),
+                pages_to_restore: Vec::new(),
             },
             Context {
                 snapshot_addr: parsed_addr,
@@ -175,30 +181,74 @@ impl Cannoli for Tracer {
                     self.reached_snapshot = true;
                     self.maps.sort_by_key(|x| x.start);
                 }
-                Operation::Read { pc, addr, val, sz } => {
+                Operation::Read {
+                    pc: _,
+                    addr,
+                    val: _,
+                    sz,
+                } => {
                     if !self.reached_snapshot {
                         continue;
                     }
-
-                    if let Some(map) = self.check_in_map(*addr) {
+                    if let Some(map_idx) = self.check_in_map(*addr) {
+                        let mut tainted = false;
+                        // Check that all the bytes were previously written
+                        for offset in 0..*sz {
+                            let byte_addr = *addr + (offset as u64);
+                            tainted = tainted | self.maps[map_idx].tainted.contains(&byte_addr);
+                            if !tainted {
+                                self.maps[map_idx].seen.insert(&byte_addr);
+                            }
+                        }
+                        if !tainted {
+                            continue;
+                        }
                     } else {
                         continue;
                     }
-                    println!(
-                        "\x1b[0;32mREAD{sz}\x1b[0m  @ {pc:#x} | \
-                        {addr:#x} ={val:#x}"
-                    );
+                    // println!(
+                    //     "\x1b[0;32mREAD{sz}\x1b[0m  @ {pc:#x} | \
+                    //     {addr:#x} ={val:#x}"
+                    // );
                 }
                 Operation::Write { pc, addr, val, sz } => {
-                    if let Some(map) = self.check_in_map(*addr) {
+                    if !self.reached_snapshot {
+                        continue;
+                    }
+                    if let Some(map_idx) = self.check_in_map(*addr) {
+                        let mut seen = false;
+                        for offset in 0..*sz {
+                            let byte_addr = *addr + (offset as u64);
+                            seen = seen
+                                | (self.maps[map_idx].seen.contains(&byte_addr)
+                                    & !self.maps[map_idx].tainted.contains(&byte_addr));
+                            self.maps[map_idx].tainted.insert(&byte_addr);
+                        }
+                        if !seen {
+                            continue;
+                        }
                     } else {
                         continue;
                     }
-                    if self.reached_snapshot {
-                        println!(
-                            "\x1b[0;31mWRITE{sz}\x1b[0m @ {pc:#x} | \
+                    // If we get here, we've found a write that happens after a read
+                    //  we should report it to be restored.
+                    println!(
+                        "\x1b[0;31mWRITE{sz}\x1b[0m @ {pc:#x} | \
                         {addr:#x} ={val:#x}"
-                        );
+                    );
+                    let page_start = *addr ^ (*addr & 0xfff);
+                    let end_addr = *addr + *sz as u64;
+                    let page_end = end_addr ^ (end_addr & 0xfff);
+                    // assume that the maximum write size is 256 bytes so we cant
+                    //  overlap more than two pages
+                    for page in [page_start, page_end].iter() {
+                        match self.pages_to_restore.binary_search(page) {
+                            Ok(_) => {}
+                            Err(idx) => {
+                                self.pages_to_restore.insert(idx, *page);
+                                println!("{:X?}", self.pages_to_restore);
+                            }
+                        }
                     }
                 }
                 Operation::Mmap {
@@ -210,6 +260,8 @@ impl Cannoli for Tracer {
                     self.maps.push(Map {
                         start: *base,
                         size: *len,
+                        tainted: BloomFilter::with_rate(0.05, 1000000),
+                        seen: BloomFilter::with_rate(0.05, 1000000),
                     });
                     println!("\x1b[0;34mMMAP\x1b[0m   {base:#x} {len:#x} {path} {offset:#x}");
                 }
