@@ -3,3 +3,4 @@ example_app
 symbols.txt
 cc.tgz
 *-linux-musl-cross/
+maps.bin

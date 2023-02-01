@@ -3,15 +3,15 @@
 
 #![feature(array_chunks, once_cell)]
 
-use std::io::Read;
+use mempipe::RecvPipe;
 use std::any::Any;
+use std::collections::HashMap;
 use std::ffi::CStr;
+use std::io::Read;
 use std::mem::{size_of, MaybeUninit};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex, LazyLock};
-use std::time::{Instant, Duration};
-use std::collections::HashMap;
-use mempipe::RecvPipe;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 /// Wrapper around [`Error`]
 type Result<T> = std::result::Result<T, Error>;
@@ -121,16 +121,16 @@ pub enum Architecture {
 impl From<i32> for Architecture {
     fn from(val: i32) -> Self {
         match val {
-             0 => Self::Aarch64,
-             1 => Self::Aarch64be,
-             2 => Self::Alpha,
-             3 => Self::Armv5teb,
-             4 => Self::Armv5tel,
-             5 => Self::Cris,
-             6 => Self::Hexagon,
-             7 => Self::I386,
-             8 => Self::I686,
-             9 => Self::M68k,
+            0 => Self::Aarch64,
+            1 => Self::Aarch64be,
+            2 => Self::Alpha,
+            3 => Self::Armv5teb,
+            4 => Self::Armv5tel,
+            5 => Self::Cris,
+            6 => Self::Hexagon,
+            7 => Self::I386,
+            8 => Self::I686,
+            9 => Self::M68k,
             10 => Self::Microblaze,
             11 => Self::Mips,
             12 => Self::Mips64,
@@ -148,7 +148,7 @@ impl From<i32> for Architecture {
             24 => Self::Sparc64,
             25 => Self::X86_64,
             26 => Self::Xtensa,
-            _  => panic!("Cannoli: Unhandled architecture ID {}", val),
+            _ => panic!("Cannoli: Unhandled architecture ID {}", val),
         }
     }
 }
@@ -160,36 +160,37 @@ impl Architecture {
     ///
     /// Expects a pointer to a valid null-terminatedf string
     pub unsafe fn from_cstr(arch: *const i8) -> Self {
-        let arch = CStr::from_ptr(arch).to_str().expect(
-            "Cannoli: Invalid string passed to Architecture::from_cstr()");
+        let arch = CStr::from_ptr(arch)
+            .to_str()
+            .expect("Cannoli: Invalid string passed to Architecture::from_cstr()");
         match arch {
-            "aarch64"    => Architecture::Aarch64,
+            "aarch64" => Architecture::Aarch64,
             "aarch64_be" => Architecture::Aarch64be,
-            "alpha"      => Architecture::Alpha,
-            "armv5teb"   => Architecture::Armv5teb,
-            "armv5tel"   => Architecture::Armv5tel,
-            "cris"       => Architecture::Cris,
-            "hexagon"    => Architecture::Hexagon,
-            "i386"       => Architecture::I386,
-            "i686"       => Architecture::I686,
-            "m68k"       => Architecture::M68k,
+            "alpha" => Architecture::Alpha,
+            "armv5teb" => Architecture::Armv5teb,
+            "armv5tel" => Architecture::Armv5tel,
+            "cris" => Architecture::Cris,
+            "hexagon" => Architecture::Hexagon,
+            "i386" => Architecture::I386,
+            "i686" => Architecture::I686,
+            "m68k" => Architecture::M68k,
             "microblaze" => Architecture::Microblaze,
-            "mips"       => Architecture::Mips,
-            "mips64"     => Architecture::Mips64,
-            "nios2"      => Architecture::Nios2,
-            "openrisc"   => Architecture::Openrisc,
-            "parisc"     => Architecture::Parisc,
-            "ppc"        => Architecture::Ppc,
-            "ppc64"      => Architecture::Ppc64,
-            "ppc64le"    => Architecture::Ppc64le,
-            "riscv32"    => Architecture::Riscv32,
-            "riscv64"    => Architecture::Riscv64,
-            "s390x"      => Architecture::S390x,
-            "sh4"        => Architecture::Sh4,
-            "sparc"      => Architecture::Sparc,
-            "sparc64"    => Architecture::Sparc64,
-            "x86_64"     => Architecture::X86_64,
-            "xtensa"     => Architecture::Xtensa,
+            "mips" => Architecture::Mips,
+            "mips64" => Architecture::Mips64,
+            "nios2" => Architecture::Nios2,
+            "openrisc" => Architecture::Openrisc,
+            "parisc" => Architecture::Parisc,
+            "ppc" => Architecture::Ppc,
+            "ppc64" => Architecture::Ppc64,
+            "ppc64le" => Architecture::Ppc64le,
+            "riscv32" => Architecture::Riscv32,
+            "riscv64" => Architecture::Riscv64,
+            "s390x" => Architecture::S390x,
+            "sh4" => Architecture::Sh4,
+            "sparc" => Architecture::Sparc,
+            "sparc64" => Architecture::Sparc64,
+            "x86_64" => Architecture::X86_64,
+            "xtensa" => Architecture::Xtensa,
             _ => panic!("Cannoli: Unhandled architecture name {}", arch),
         }
     }
@@ -243,8 +244,12 @@ macro_rules! consume {
 
 /// Given a payload of bytes that came from the IPC channel, deserialize it and
 /// invoke callbacks based on the payload
-fn parse_payload<T: Cannoli>(pid: &T::PidContext, tid: &T::TidContext,
-        trace: &mut Vec<T::Trace>, mut payload: &[u8]) -> Result<()> {
+fn parse_payload<T: Cannoli>(
+    pid: &T::PidContext,
+    tid: &T::TidContext,
+    trace: &mut Vec<T::Trace>,
+    mut payload: &[u8],
+) -> Result<()> {
     // Clear the trace
     trace.clear();
 
@@ -255,141 +260,183 @@ fn parse_payload<T: Cannoli>(pid: &T::PidContext, tid: &T::TidContext,
 
         // Handle each opcode
         match op {
-            0x00 => { // Exec32
+            0x00 => {
+                // Exec32
                 T::exec(pid, tid, consume!(payload, u32).0 as u64, trace)
-            },
-            0x80 => { // Exec64
+            }
+            0x80 => {
+                // Exec64
                 T::exec(pid, tid, consume!(payload, u64).0, trace)
-            },
+            }
 
-            0x01 => { // Regs32
+            0x01 => {
+                // Regs32
                 let size = consume!(payload, u32).0;
-                let pc   = consume!(payload, u32).0 as u64;
+                let pc = consume!(payload, u32).0 as u64;
                 let regs = &payload[..size as usize];
                 payload = &payload[size as usize..];
                 T::regs(pid, tid, pc, regs, trace)
-            },
-            0x81 => { // Regs64
+            }
+            0x81 => {
+                // Regs64
                 let size = consume!(payload, u32).0;
-                let pc   = consume!(payload, u64).0;
+                let pc = consume!(payload, u64).0;
                 let regs = &payload[..size as usize];
                 payload = &payload[size as usize..];
                 T::regs(pid, tid, pc, regs, trace)
-            },
+            }
 
-            0x30 => { // Mmap32
+            0x30 => {
+                // Mmap32
                 let (addr, len, anon, read, write, exec, path_len, offset) =
                     consume!(payload, u32, u32, u8, u8, u8, u8, u32, u32);
                 let path = core::str::from_utf8(
-                    payload.get(..path_len as usize)
-                    .ok_or(Error::BufferTruncated)?)
-                    .map_err(Error::PathEncoding)?;
+                    payload
+                        .get(..path_len as usize)
+                        .ok_or(Error::BufferTruncated)?,
+                )
+                .map_err(Error::PathEncoding)?;
                 payload = &payload[path_len as usize..];
 
-                T::mmap(pid, tid, addr as u64, len as u64, anon != 0, read != 0,
-                    write != 0, exec != 0, path, offset as u64, trace)
-            },
-            0x31 => { // Munmap32
+                T::mmap(
+                    pid,
+                    tid,
+                    addr as u64,
+                    len as u64,
+                    anon != 0,
+                    read != 0,
+                    write != 0,
+                    exec != 0,
+                    path,
+                    offset as u64,
+                    trace,
+                )
+            }
+            0x31 => {
+                // Munmap32
                 let (addr, len) = consume!(payload, u32, u32);
                 T::munmap(pid, tid, addr as u64, len as u64, trace)
-            },
-            0xb0 => { // Mmap64
+            }
+            0xb0 => {
+                // Mmap64
                 let (addr, len, anon, read, write, exec, path_len, offset) =
                     consume!(payload, u64, u64, u8, u8, u8, u8, u32, u64);
                 let path = core::str::from_utf8(
-                    payload.get(..path_len as usize)
-                    .ok_or(Error::BufferTruncated)?)
-                    .map_err(Error::PathEncoding)?;
+                    payload
+                        .get(..path_len as usize)
+                        .ok_or(Error::BufferTruncated)?,
+                )
+                .map_err(Error::PathEncoding)?;
                 payload = &payload[path_len as usize..];
 
-                T::mmap(pid, tid, addr, len, anon != 0, read != 0,
-                    write != 0, exec != 0, path, offset, trace)
-            },
-            0xb1 => { // Munmap64
+                T::mmap(
+                    pid,
+                    tid,
+                    addr,
+                    len,
+                    anon != 0,
+                    read != 0,
+                    write != 0,
+                    exec != 0,
+                    path,
+                    offset,
+                    trace,
+                )
+            }
+            0xb1 => {
+                // Munmap64
                 let (addr, len) = consume!(payload, u64, u64);
                 T::munmap(pid, tid, addr, len, trace)
-            },
+            }
 
-            0x11 => { // Read8_32
+            0x11 => {
+                // Read8_32
                 let (addr, val, pc) = consume!(payload, u32, u8, u32);
                 T::read(pid, tid, pc as u64, addr as u64, val as u64, 1, trace)
-            },
-            0x12 => { // Read16_32
+            }
+            0x12 => {
+                // Read16_32
                 let (addr, val, pc) = consume!(payload, u32, u16, u32);
                 T::read(pid, tid, pc as u64, addr as u64, val as u64, 2, trace)
-            },
-            0x14 => { // Read32_32
+            }
+            0x14 => {
+                // Read32_32
                 let (addr, val, pc) = consume!(payload, u32, u32, u32);
                 T::read(pid, tid, pc as u64, addr as u64, val as u64, 4, trace)
-            },
-            0x18 => { // Read64_32
+            }
+            0x18 => {
+                // Read64_32
                 let (addr, val, pc) = consume!(payload, u32, u64, u32);
                 T::read(pid, tid, pc as u64, addr as u64, val as u64, 8, trace)
-            },
+            }
 
-            0x21 => { // Write8_32
+            0x21 => {
+                // Write8_32
                 let (addr, val, pc) = consume!(payload, u32, u8, u32);
-                T::write(pid, tid, pc as u64, addr as u64,
-                    val as u64, 1, trace)
-            },
-            0x22 => { // Write16_32
+                T::write(pid, tid, pc as u64, addr as u64, val as u64, 1, trace)
+            }
+            0x22 => {
+                // Write16_32
                 let (addr, val, pc) = consume!(payload, u32, u16, u32);
-                T::write(pid, tid, pc as u64, addr as u64,
-                    val as u64, 2, trace)
-            },
-            0x24 => { // Write32_32
+                T::write(pid, tid, pc as u64, addr as u64, val as u64, 2, trace)
+            }
+            0x24 => {
+                // Write32_32
                 let (addr, val, pc) = consume!(payload, u32, u32, u32);
-                T::write(pid, tid, pc as u64, addr as u64,
-                    val as u64, 4, trace)
-            },
-            0x28 => { // Write64_32
+                T::write(pid, tid, pc as u64, addr as u64, val as u64, 4, trace)
+            }
+            0x28 => {
+                // Write64_32
                 let (addr, val, pc) = consume!(payload, u32, u64, u32);
-                T::write(pid, tid, pc as u64, addr as u64,
-                    val as u64, 8, trace)
-            },
+                T::write(pid, tid, pc as u64, addr as u64, val as u64, 8, trace)
+            }
 
-            0x91 => { // Read8_64
+            0x91 => {
+                // Read8_64
                 let (addr, val, pc) = consume!(payload, u64, u8, u64);
                 T::read(pid, tid, pc as u64, addr as u64, val as u64, 1, trace)
-            },
-            0x92 => { // Read16_64
+            }
+            0x92 => {
+                // Read16_64
                 let (addr, val, pc) = consume!(payload, u64, u16, u64);
                 T::read(pid, tid, pc as u64, addr as u64, val as u64, 2, trace)
-            },
-            0x94 => { // Read32_64
+            }
+            0x94 => {
+                // Read32_64
                 let (addr, val, pc) = consume!(payload, u64, u32, u64);
                 T::read(pid, tid, pc as u64, addr as u64, val as u64, 4, trace)
-            },
-            0x98 => { // Read64_64
+            }
+            0x98 => {
+                // Read64_64
                 let (addr, val, pc) = consume!(payload, u64, u64, u64);
                 T::read(pid, tid, pc as u64, addr as u64, val as u64, 8, trace)
-            },
+            }
 
-            0xa1 => { // Write8_64
+            0xa1 => {
+                // Write8_64
                 let (addr, val, pc) = consume!(payload, u64, u8, u64);
-                T::write(pid, tid, pc as u64, addr as u64,
-                    val as u64, 1, trace)
-            },
-            0xa2 => { // Write16_64
+                T::write(pid, tid, pc as u64, addr as u64, val as u64, 1, trace)
+            }
+            0xa2 => {
+                // Write16_64
                 let (addr, val, pc) = consume!(payload, u64, u16, u64);
-                T::write(pid, tid, pc as u64, addr as u64,
-                    val as u64, 2, trace)
-            },
-            0xa4 => { // Write32_64
+                T::write(pid, tid, pc as u64, addr as u64, val as u64, 2, trace)
+            }
+            0xa4 => {
+                // Write32_64
                 let (addr, val, pc) = consume!(payload, u64, u32, u64);
-                T::write(pid, tid, pc as u64, addr as u64,
-                    val as u64, 4, trace)
-            },
-            0xa8 => { // Write64_64
+                T::write(pid, tid, pc as u64, addr as u64, val as u64, 4, trace)
+            }
+            0xa8 => {
+                // Write64_64
                 let (addr, val, pc) = consume!(payload, u64, u64, u64);
-                T::write(pid, tid, pc as u64, addr as u64,
-                    val as u64, 8, trace)
-            },
+                T::write(pid, tid, pc as u64, addr as u64, val as u64, 8, trace)
+            }
 
             _ => {
                 // Invalid opcode
                 return Err(Error::InvalidOpcode(op));
-            },
+            }
         }
     }
 
@@ -428,13 +475,13 @@ pub struct ClientInfo {
 
 /// Handle a newly connected client. This is run on a new thread each time a
 /// new TCP connection comes in.
-fn handle_client<T>(
-        stream: TcpStream, num_threads: usize, ci: &ClientInfo) -> Result<()>
-            where T: Cannoli + 'static,
-                  T::PidContext: Send + Sync + 'static {
+fn handle_client<T>(stream: TcpStream, num_threads: usize, ci: &ClientInfo) -> Result<()>
+where
+    T: Cannoli + 'static,
+    T::PidContext: Send + Sync + 'static,
+{
     /// Storage for PID contexts, keyed by target process ID
-    static PID_CONTEXTS: LazyLock<Mutex<
-            HashMap<i32, Arc<dyn Any + Send + Sync>>>> =
+    static PID_CONTEXTS: LazyLock<Mutex<HashMap<i32, Arc<dyn Any + Send + Sync>>>> =
         LazyLock::new(|| Mutex::new(HashMap::new()));
 
     /// Storage for the mini state-machine we use to sequence traces
@@ -451,11 +498,11 @@ fn handle_client<T>(
     }
 
     // Create the IPC connection to the UID we got
-    let pipe = RecvPipe::<CHUNK_SIZE, NUM_BUFFERS>::open(ci.uid)
-        .map_err(Error::OpenPipe)?;
+    let pipe = RecvPipe::<CHUNK_SIZE, NUM_BUFFERS>::open(ci.uid).map_err(Error::OpenPipe)?;
 
     // Make the stream nonblocking
-    stream.set_nonblocking(true)
+    stream
+        .set_nonblocking(true)
         .map_err(Error::SetNonblocking)?;
 
     // Scratch buffer to check for socket close
@@ -471,9 +518,10 @@ fn handle_client<T>(
         let mut contexts = PID_CONTEXTS.lock().unwrap();
 
         // Either get the existing context or create a new one
-        contexts.entry(ci.pid).or_insert_with(|| {
-            T::init_pid(ci)
-        }).clone()
+        contexts
+            .entry(ci.pid)
+            .or_insert_with(|| T::init_pid(ci))
+            .clone()
     };
 
     // Get the PID context with the correct type
@@ -486,8 +534,8 @@ fn handle_client<T>(
     // Create the sequencing state machine
     let state = Mutex::new(State {
         next_seq: 0,
-        traces:   Vec::new(),
-        user:     user_type,
+        traces: Vec::new(),
+        user: user_type,
     });
     let state = &state;
 
@@ -533,10 +581,9 @@ fn handle_client<T>(
 
                         // Attempt to get a payload from the pipe, parse it if
                         // there was one
-                        let (new_ticket, payload) = pipe.try_recv(
-                            ticket.take().unwrap(),
-                            |x| parse_payload::<T>(
-                                &*pid_context, user_ctxt, &mut trace, x));
+                        let (new_ticket, payload) = pipe.try_recv(ticket.take().unwrap(), |x| {
+                            parse_payload::<T>(&*pid_context, user_ctxt, &mut trace, x)
+                        });
 
                         // Replace the ticket with the new ticket
                         ticket = Some(new_ticket);
@@ -562,8 +609,7 @@ fn handle_client<T>(
                             let mut state = state.lock().unwrap();
 
                             // Find the correct trace index
-                            let idx = match state.traces
-                                    .binary_search_by_key(&seq, |x| x.0) {
+                            let idx = match state.traces.binary_search_by_key(&seq, |x| x.0) {
                                 Ok(idx) | Err(idx) => idx,
                             };
 
@@ -572,18 +618,15 @@ fn handle_client<T>(
                             state.traces.insert(idx, (seq, trace));
 
                             // Report traces in order
-                            while !state.traces.is_empty() &&
-                                    state.next_seq == state.traces[0].0 {
+                            while !state.traces.is_empty() && state.next_seq == state.traces[0].0 {
                                 // Update the reporting sequence
-                                state.next_seq =
-                                    state.next_seq.wrapping_add(1);
+                                state.next_seq = state.next_seq.wrapping_add(1);
 
                                 // Remove the entry from traces
                                 let trace = state.traces.remove(0).1;
 
                                 // Report the trace
-                                state.user.trace(&*pid_context,
-                                    user_ctxt, &trace);
+                                state.user.trace(&*pid_context, user_ctxt, &trace);
                             }
 
                             // Drop the lock and re-allocate the trace buffer
@@ -619,6 +662,8 @@ fn handle_client<T>(
         }
     }
 
+    state.lock().unwrap().user.finish();
+
     // We did everything we wanted!
     Ok(())
 }
@@ -630,12 +675,13 @@ fn handle_client<T>(
 /// Create `threads` number of threads for every connection that comes in.
 /// These threads will handle all Cannoli parsing and callbacks
 pub fn create_cannoli<T>(threads: usize) -> Result<()>
-        where T: Cannoli + 'static,
-              T::PidContext: Send + Sync + 'static {
+where
+    T: Cannoli + 'static,
+    T::PidContext: Send + Sync + 'static,
+{
     // Create socket, waiting for clients to connect and inform us about some
     // memory regions
-    let listener = TcpListener::bind("127.0.0.1:11458")
-        .map_err(Error::Bind)?;
+    let listener = TcpListener::bind("127.0.0.1:11458").map_err(Error::Bind)?;
 
     // Create a new thread scope for handling connections
     std::thread::scope(|scope| {
@@ -647,22 +693,23 @@ pub fn create_cannoli<T>(threads: usize) -> Result<()>
                 let mut stream = stream.expect("Failed to get TCP stream");
 
                 // Get the header
-                let mut header: MaybeUninit<ClientConn> =
-                    MaybeUninit::uninit();
-                stream.read_exact(unsafe {
-                    core::slice::from_raw_parts_mut(
-                        header.as_mut_ptr() as *mut u8,
-                        core::mem::size_of_val(&header))
-                }).expect("Failed to get client header");
+                let mut header: MaybeUninit<ClientConn> = MaybeUninit::uninit();
+                stream
+                    .read_exact(unsafe {
+                        core::slice::from_raw_parts_mut(
+                            header.as_mut_ptr() as *mut u8,
+                            core::mem::size_of_val(&header),
+                        )
+                    })
+                    .expect("Failed to get client header");
 
                 // Get the actual header now that it's initialized
                 let header: ClientConn = unsafe { header.assume_init() };
 
                 // Get the pcomm and comm
-                let mut comm =
-                    vec![0u8; header.pcomm_len as usize +
-                              header.comm_len  as usize];
-                stream.read_exact(&mut comm)
+                let mut comm = vec![0u8; header.pcomm_len as usize + header.comm_len as usize];
+                stream
+                    .read_exact(&mut comm)
                     .expect("Failed to get client pcomm and comm");
 
                 // Construct client information
@@ -678,20 +725,19 @@ pub fn create_cannoli<T>(threads: usize) -> Result<()>
 
                     // PIDs
                     ppid: header.ppid,
-                    pid:  header.pid,
-                    tid:  header.tid,
+                    pid: header.pid,
+                    tid: header.tid,
 
-                    pcomm: std::str::from_utf8(
-                        &comm[..header.pcomm_len as usize])
-                        .ok().map(|x| x.to_string()),
-                    comm: std::str::from_utf8(
-                        &comm[header.pcomm_len as usize..])
-                        .ok().map(|x| x.to_string()),
+                    pcomm: std::str::from_utf8(&comm[..header.pcomm_len as usize])
+                        .ok()
+                        .map(|x| x.to_string()),
+                    comm: std::str::from_utf8(&comm[header.pcomm_len as usize..])
+                        .ok()
+                        .map(|x| x.to_string()),
                 };
 
                 // Handle the client
-                handle_client::<T>(stream, threads, &ci)
-                    .expect("Failed to handle client");
+                handle_client::<T>(stream, threads, &ci).expect("Failed to handle client");
             });
         }
 
@@ -726,13 +772,16 @@ pub trait Cannoli: Send + Sync {
     /// Called when the first thread of a given target PID is connected, this
     /// creates the `PidContext` which is then shared with all threads
     /// for a given PID
-    fn init_pid(ci: &ClientInfo) -> Arc<Self::PidContext> where Self: Sized;
+    fn init_pid(ci: &ClientInfo) -> Arc<Self::PidContext>
+    where
+        Self: Sized;
 
     /// Create a new `Self` for a new IPC session. See [`ClientInfo`] for the
     /// information you are provided. This is created when a new thread is
     /// created in QEMU
-    fn init_tid(pid: &Self::PidContext, ci: &ClientInfo)
-        -> (Self, Self::TidContext) where Self: Sized;
+    fn init_tid(pid: &Self::PidContext, ci: &ClientInfo) -> (Self, Self::TidContext)
+    where
+        Self: Sized;
 
     /// Invoked when a PC execution opcode was lifted from the trace
     ///
@@ -749,8 +798,13 @@ pub trait Cannoli: Send + Sync {
     /// are processing traces, the order of the events are not stable. This
     /// function is only meant to reason about `pc` in isolation, not with
     /// respect to previous operations.
-    fn exec(_pid: &Self::PidContext, _tid: &Self::TidContext, _pc: u64,
-            _trace: &mut Vec<Self::Trace>) {}
+    fn exec(
+        _pid: &Self::PidContext,
+        _tid: &Self::TidContext,
+        _pc: u64,
+        _trace: &mut Vec<Self::Trace>,
+    ) {
+    }
 
     /// Invoked when execution of an instruction with register tracing occurs
     ///
@@ -767,9 +821,14 @@ pub trait Cannoli: Send + Sync {
     /// are processing traces, the order of the events are not stable. This
     /// function is only meant to reason about `pc` in isolation, not with
     /// respect to previous operations.
-    fn regs(_pid: &Self::PidContext, _tid: &Self::TidContext,
-            _pc: u64, _regs: &[u8],
-            _trace: &mut Vec<Self::Trace>) {}
+    fn regs(
+        _pid: &Self::PidContext,
+        _tid: &Self::TidContext,
+        _pc: u64,
+        _regs: &[u8],
+        _trace: &mut Vec<Self::Trace>,
+    ) {
+    }
 
     /// Invoked when a memory load was lifted from the trace with a given
     /// access size in bytes
@@ -787,9 +846,16 @@ pub trait Cannoli: Send + Sync {
     /// are processing traces, the order of the events are not stable. This
     /// function is only meant to reason about the arguments in isolation,
     /// not with respect to previous operations.
-    fn read(_pid: &Self::PidContext, _tid: &Self::TidContext,
-            _pc: u64, _addr: u64, _val: u64, _sz: u8,
-            _trace: &mut Vec<Self::Trace>) {}
+    fn read(
+        _pid: &Self::PidContext,
+        _tid: &Self::TidContext,
+        _pc: u64,
+        _addr: u64,
+        _val: u64,
+        _sz: u8,
+        _trace: &mut Vec<Self::Trace>,
+    ) {
+    }
 
     /// Invoked when a memory store was lifted from the trace with a given
     /// access size in bytes
@@ -807,10 +873,16 @@ pub trait Cannoli: Send + Sync {
     /// are processing traces, the order of the events are not stable. This
     /// function is only meant to reason about the arguments in isolation,
     /// not with respect to previous operations.
-    fn write(_pid: &Self::PidContext, _tid: &Self::TidContext,
-             _pc: u64, _addr: u64,
-             _val: u64, _sz: u8,
-             _trace: &mut Vec<Self::Trace>) {}
+    fn write(
+        _pid: &Self::PidContext,
+        _tid: &Self::TidContext,
+        _pc: u64,
+        _addr: u64,
+        _val: u64,
+        _sz: u8,
+        _trace: &mut Vec<Self::Trace>,
+    ) {
+    }
 
     /// When a new sequential chunk of traces is available, this is invoked.
     /// This is _always_ invoked sequentially, such that the traces could be
@@ -818,19 +890,34 @@ pub trait Cannoli: Send + Sync {
     ///
     /// Executed serially. Maybe in different threads, but only one at a time
     /// (hence, mutable access to self)
-    fn trace(&mut self, _pid: &Self::PidContext,
-        _tid: &Self::TidContext, _trace: &[Self::Trace]) {}
+    fn trace(&mut self, _pid: &Self::PidContext, _tid: &Self::TidContext, _trace: &[Self::Trace]) {}
 
     /// Invoked after a _successful_ mmap() in the target application, provides
     /// the base address, length, anon state, read, write, and exec flags
-    fn mmap(_pid: &Self::PidContext, _tid: &Self::TidContext,
-        _base: u64, _len: u64, _anon: bool,
-        _read: bool, _write: bool, _exec: bool, _path: &str, _offset: u64,
-        _trace: &mut Vec<Self::Trace>) {}
+    fn mmap(
+        _pid: &Self::PidContext,
+        _tid: &Self::TidContext,
+        _base: u64,
+        _len: u64,
+        _anon: bool,
+        _read: bool,
+        _write: bool,
+        _exec: bool,
+        _path: &str,
+        _offset: u64,
+        _trace: &mut Vec<Self::Trace>,
+    ) {
+    }
 
     /// Invoked when the guest is attempting to `munmap()` memory
-    fn munmap(_pid: &Self::PidContext, _tid: &Self::TidContext,
-              _base: u64, _len: u64,
-              _trace: &mut Vec<Self::Trace>) {}
-}
+    fn munmap(
+        _pid: &Self::PidContext,
+        _tid: &Self::TidContext,
+        _base: u64,
+        _len: u64,
+        _trace: &mut Vec<Self::Trace>,
+    ) {
+    }
 
+    fn finish(&self) {}
+}
